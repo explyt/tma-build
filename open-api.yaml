@@ -1,0 +1,1192 @@
+openapi: "3.1.0"
+info:
+  version: 1.1.0
+  title: Esprito TMA API
+servers:
+  - url: https://api.esprito.com
+    description: Production server
+  - url: http://localhost:8080
+    description: Local server
+paths:
+  /api/auth:
+    post:
+      tags:
+        - authentication
+      summary: Авторизация пользователя
+      description: Проверяет данные пользователя и генерирует access или refresh токен
+      requestBody:
+        description: Данные аутентификации пользователя
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserAuth'
+      parameters:
+        - name: isRefresh
+          in: query
+          description: Получение refresh токена, если false получаем access токен
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Пользователь успешно авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JWTToken'
+        '409':
+          description: >-
+            Конфликт пользовательских данных 
+            - Если не прошла верификация;
+            - Если в init_data неполные данные;
+            - Если отсутствуют обязательные поля
+          content:
+            application/json:
+              schema:
+                type: string
+        '400':
+          description: Неизвестная ошибка
+          content:
+            application/json:
+              schema:
+                type: string
+  /auth/refresh:
+    post:
+      tags:
+        - authentication
+      summary: Обновить access токен
+      description: Проверяет refresh токен и генерирует новый access токен
+      parameters:
+        - name: token
+          in: query
+          description: refresh токен
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Новый access токен успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JWTToken'
+        '409':
+          description: Конфликт пользовательских данных
+          content:
+            application/json:
+              schema:
+                type: string
+        '401':
+          description: Неверный refresh токен
+          content:
+            application/json:
+              schema:
+                type: string
+        '400':
+          description: Неизвестная ошибка
+          content:
+            application/json:
+              schema:
+                type: string
+  /api/users:
+    post:
+      description: Создание пользователя. В отладочных целях модель пользователя из запроса сохраняется в БД
+      operationId: createUser
+      tags:
+        - users
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAppInitData'
+      responses:
+        '201':
+          description: Успешное создание пользователя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '409':
+          description: Пользователь с таким id уже создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+      security:
+        - bearerAuth: [ ]
+  /api/users/{id}:
+    get:
+      description: Получение пользователя по id
+      tags:
+        - users
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      operationId: getUserById
+      responses:
+        '200':
+          description: Пользователь найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Not found
+      security:
+        - bearerAuth: [ ]
+    patch:
+      description: >-
+        Если в переданном теле есть поле address (из wallet.account.address), обновляем его значение в модели пользователя
+        Если передано поле next_claim_ts, запускаем "фарминг" токенов
+      tags:
+        - users
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      operationId: updateUserData
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+      responses:
+        '200':
+          description: Модель успешно обновлена
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Not found
+      security:
+        - bearerAuth: [ ]
+  /api/users/{id}/claim:
+    post:
+      tags:
+        - users
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            default: claim
+            enum:
+              - claim
+              - referrals
+      operationId: claimTokens
+      responses:
+        '200':
+          description: Успешно получено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Not found
+        '409':
+          description: Запрос производится слишком рано. Для type=claim также возможно, что фарминг ещё не был начат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+      security:
+        - bearerAuth: [ ]
+  /api/users/{id}/claims:
+    get:
+      description: Запросить историю получения токенов
+      tags:
+        - users
+      operationId: getClaimHistory
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: Успешно получено
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ClaimRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Пользователь с данным id не найден
+      security:
+        - bearerAuth: [ ]
+  /api/users/{id}/referrals:
+    get:
+      description: Запросить информацию о рефералах пользователя
+      tags:
+        - users
+      operationId: getReferralsInfo
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: Успешно получено
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ReferralResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Пользователь с данным id не найден
+      security:
+        - bearerAuth: [ ]
+  /api/users/{id}/tasks:
+    get:
+      description: >-
+        Получить задачи пользователя. При этом осуществляется проверка, должны ли получаемые задачи быть переведены в статус Done и если да, то задачи возвращаются с этим статусом
+      tags:
+        - users
+      operationId: getTasks
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: Успешно получено
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Пользователь с данным id не найден
+      security:
+        - bearerAuth: [ ]
+  /api/users/{id}/tasks/{taskid}:
+    patch:
+      description: Запустить выполнение задачи. Имеет смысл для задач типа Delayed
+      tags:
+        - users
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - name: taskid
+          in: path
+          description: Task id
+          required: true
+          schema:
+            type: string
+            example: 668121b3d5c01a6d7a85cb7c
+      operationId: startTask
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                finish_ts:
+                  description: Время когда задача будет считаться завершённой. В формате timestamp.
+                  type: integer
+                  format: int64
+                  example: 1719483620
+      responses:
+        '200':
+          description: Успешно запущено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserTask'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Not found
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - bearerAuth: [ ]
+  /api/users/{id}/claimTasks:
+    post:
+      description: >-
+        Завершить выполнение задачи и забрать YEP
+        Для каждой задачи не в статусе TaskStatus.Claimed осуществляется проверка готовности.
+        Задача готова в любом из следующих случаев:
+         - она находится в статусе TaskStatus.Done
+         - тип задачи TaskType.Delayed и finish_ts в прошлом 
+         - тип задачи TaskType.Instant и условие определяемое по полю code исполнено
+        
+        Такие задачи будет переведены в статус TaskStatus.Claimed, а в claim history пользователя добавится запись с типом ClaimType.Task
+      tags:
+        - users
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      operationId: claimTask
+      responses:
+        '200':
+          description: Успешно завершено
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ClaimResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Not found
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - bearerAuth: [ ]
+  /api/users/{id}/rates/{jetton_address}:
+    get:
+      description: Получить оценку жетона или приложения пользователем
+      tags:
+        - users
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/JettonAddress'
+      operationId: getJettonRate
+      responses:
+        '200':
+          description: Успешное получение сохранённой оценки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JettonRate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - bearerAuth: [ ]
+    post:
+      description: Получить оценку жетона или приложения пользователем
+      tags:
+        - users
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/JettonAddress'
+      operationId: getJettonRate
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JettonRate'
+      responses:
+        '200':
+          description: Успешное сохранение оценки + получение награды
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - bearerAuth: [ ]
+  /api/admin/banned:
+    get:
+      description: Получить список всех забаненых пользователей
+      tags:
+        - banned
+      operationId: getAllBanned
+      responses:
+        '200':
+          description: Список успешно получен
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+      security:
+        - bearerAuth: [ ]
+    post:
+      description: >-
+        Отправить пользователей с указанными id в бан.
+        Забаненые пользователи не отображаются в друзьях и не могут осуществлять основные операции
+      tags:
+        - banned
+      operationId: addToBanned
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  description: Список идентификаторов пользователей
+                  type: array
+                  items:
+                    type: integer
+                    format: int64
+      responses:
+        '200':
+          description: Успешно выполнено
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+      security:
+        - bearerAuth: [ ]
+  /api/admin/banned/release:
+    post:
+      description: Выпустить пользователей с указанными id из бана.
+      tags:
+        - banned
+      operationId: releaseFromBan
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  description: Список идентификаторов пользователей
+                  type: array
+                  items:
+                    type: integer
+                    format: int64
+      responses:
+        '200':
+          description: Успешно выполнено
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+      security:
+        - bearerAuth: [ ]
+  /api/admin/tasks:
+    get:
+      description: Получить список всех задач
+      tags:
+        - tasks
+      operationId: getAllTasks
+      responses:
+        '200':
+          description: Список успешно получен
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+      security:
+        - bearerAuth: [ ]
+    post:
+      description: Создать задачу, поле `id` должно быть пустым
+      tags:
+        - tasks
+      operationId: createTask
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+      responses:
+        '201':
+          description: Задача успешно создана, в теле ответа поле `id` вернётся заполненным
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - bearerAuth: [ ]
+  /api/admin/tasks/{id}:
+    get:
+      description: Получение задачи по id
+      tags:
+        - tasks
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      operationId: getTaskById
+      responses:
+        '200':
+          description: Задача найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          description: Not found
+      security:
+        - bearerAuth: [ ]
+    put:
+      description: Обновить задачу, поле `id` должно совпадать со значением параметра id задачи
+      tags:
+        - tasks
+      operationId: updateTask
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+      responses:
+        '200':
+          description: Задача успешно обновлена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Not found
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - bearerAuth: [ ]
+
+  /api/admin/reports:
+    get:
+      description: >-
+        Получить список всех непроверенных отчётов. 
+        Отчёт не был проверен, если его статус null или Created
+      tags:
+        - reports
+      operationId: getReports
+      responses:
+        '200':
+          description: Список успешно получен
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Report'
+      security:
+        - bearerAuth: [ ]
+  /api/admin/reports/{id}:
+    get:
+      description: Получение отчёта по id
+      tags:
+        - reports
+      parameters:
+        - $ref: '#/components/parameters/ReportId'
+      operationId: getReportById
+      responses:
+        '200':
+          description: Отчёт найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+        '404':
+          description: Not found
+      security:
+        - bearerAuth: [ ]
+    put:
+      description: Подтвердить проверку отчёта
+      tags:
+        - reports
+      operationId: updateReport
+      parameters:
+        - $ref: '#/components/parameters/ReportId'
+      responses:
+        '200':
+          description: Отчёт успешно обновлён, YEP пользователю начислены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+        '404':
+          description: Not found
+      security:
+        - bearerAuth: [ ]
+    delete:
+      description: Отчёт проверен. Результат проверки отрицательный
+      tags:
+        - reports
+      operationId: rejectReport
+      parameters:
+        - $ref: '#/components/parameters/ReportId'
+      responses:
+        '200':
+          description: Отчёт успешно обновлён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+        '404':
+          description: Not found
+      security:
+        - bearerAuth: [ ]
+  /api/admin/jettons/{jetton_address}:
+    post:
+      description: Создать новый жетон
+      tags:
+        - jettons
+      parameters:
+        - $ref: '#/components/parameters/JettonAddress'
+      operationId: createJetton
+      responses:
+        '201':
+          description: Успешное создание жетона
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Jetton'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - bearerAuth: [ ]
+  /api/admin/apps/{app_id}:
+    post:
+      description: Создать новое приложение
+      tags:
+        - jettons
+      parameters:
+        - $ref: '#/components/parameters/AppId'
+      operationId: createApp
+      responses:
+        '201':
+          description: Успешное создание приложения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/App'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - bearerAuth: [ ]
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    UserId:
+      name: id
+      in: path
+      description: Id пользователя. Можно использовать псевдоним `me` для текущего пользователя, тогда id будет получен из блока авторизации
+      required: true
+      schema:
+        type: string
+    ReportId:
+      name: id
+      in: path
+      description: Id отчёта
+      required: true
+      schema:
+        type: string
+    TaskId:
+      name: id
+      in: path
+      description: Id задачи
+      required: true
+      schema:
+        type: string
+    JettonAddress:
+      name: jetton_address
+      in: path
+      description: Уникальный адрес жетона
+      required: true
+      schema:
+        type: string
+    AppId:
+      name: app_id
+      in: path
+      description: Уникальный идентификатор приложения
+      required: true
+      schema:
+        type: string
+  responses:
+    NotFound:
+      description: Not found (404)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResult'
+    BadRequest:
+      description: Bad request (400)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResult'
+    NotAcceptable:
+      description: Not acceptable (406)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResult'
+    Conflict:
+      description: Conflict (409)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResult'
+  schemas:
+    UserAuth:
+      type: object
+      properties:
+        init_data:
+          type: string
+          example: "query_id=AAGGlO0NAAAAAIaU7Q0OxBXw&user=%7B%22id%22%3A233673862%2C%2..."
+    JWTToken:
+      type: object
+      properties:
+        token_id:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    ErrorResult:
+      type: object
+      properties:
+        code:
+          description: Код ошибки
+          type: string
+        message:
+          description: Сообщение об ошибке
+          type: string
+    JettonRate:
+      type: object
+      properties:
+        hodl:
+          description: HODL
+          type: string
+          example: 1w
+        trust:
+          type: integer
+          format: int32
+          example: 1
+        recommend:
+          type: integer
+          format: int32
+          example: 1
+    Jetton:
+      type: object
+      properties:
+        jetton_address:
+          description: Адрес жетона (уникальный)
+          type: string
+          example: EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs
+        hodl:
+          description: HODL
+          type: string
+          example: 1m
+        trust:
+          type: number
+          format: double
+          example: 1.25
+        recommend:
+          type: number
+          format: double
+          example: 4.25
+        rates:
+          description: количество сохранённых оценок
+          type: integer
+          format: int32
+          example: 42
+    App:
+      type: object
+      properties:
+        app_id:
+          description: Идентификатор приложения
+          type: string
+          example: catizenbot
+        recommend:
+          type: number
+          format: double
+          example: 4.25
+        rates:
+          description: количество сохранённых оценок
+          type: integer
+          format: int32
+          example: 42
+    WaId:
+      description: >-
+        WebAppId, соответствует telegram [WebAppUser.id](https://core.telegram.org/bots/webapps#webappuser)
+      type: integer
+      format: int64
+      example: 123456
+    ClaimResult:
+      type: object
+      description: Результат получения YEP
+      required:
+        - claim_value
+        - balance
+      properties:
+        claim_value:
+          description: Количество полученных YEP в результате операции
+          type: integer
+          format: int32
+          example: 100
+        balance:
+          description: Баланс пользователя после получения
+          type: integer
+          format: int64
+          example: 1100
+    ReferralResult:
+      type: object
+      description: Данные о пользователе зарегистрированном через нашу реферальную ссылку
+      required:
+        - balance_diff
+      properties:
+        wa_id:
+          allOf:
+            - $ref: '#/components/schemas/WaId'
+        firstName:
+          description: >-
+            Имя пользователя, соответствует telegram [WebAppUser.firstName](https://core.telegram.org/bots/webapps#webappuser)
+          type: string
+          example: Роланд
+        username:
+          description: >-
+            Login пользователя, соответствует telegram [WebAppUser.username](https://core.telegram.org/bots/webapps#webappuser)
+          type: string
+          example: gheralt92
+        photo_url:
+          description: >-
+            Ссылка на фото, соответствует telegram [WebAppUser.photo_url](https://core.telegram.org/bots/webapps#webappuser)
+          type: string
+        balance:
+          description: Количество YEP накопленных пользователем
+          type: integer
+          format: int64
+          example: 1100
+        balance_diff:
+          description: Количество YEP накопленных пользователем за последние сутки
+          type: integer
+          format: int32
+          example: 1000
+    TaskResult:
+      type: object
+      description: Данные о задаче назначенной пользователю
+      required:
+        - task_id
+        - name
+        - icon_url
+        - type
+        - status
+        - bonus
+      properties:
+        task_id:
+          $ref: '#/components/schemas/TaskId'
+        name:
+          description: >-
+            Наименование задачи
+          type: string
+          example: someName
+        code:
+          description: Кодовое наименование задачи. Для TaskType.Instant по нему определяется логика выполнения задачи
+          format: string
+          example: Friend
+        icon_type:
+          description: Тип иконки отображаемой для задачи
+          type: string
+          example: Telegram
+        icon_url:
+          description: Ссылка на изображение
+          type: string
+        type:
+          $ref: '#/components/schemas/TaskType'
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        bonus:
+          description: Количество YEP которые будут получены за выполнение задачи
+          type: integer
+          format: int32
+          example: 250
+        finish_ts:
+          description: Когда за запущенную на выполнение задачу можно будет забрать YEP в формате timestamp
+          type: integer
+          format: int64
+          example: 1719483620
+        target_link:
+          description: Ссылка по которой пользователь должен перейти для выполнения задачи
+          type: string
+    UserTask:
+      type: object
+      description: Связка задачи с пользователем
+      required:
+        - wa_id
+        - task
+        - status
+      properties:
+        wa_id:
+          $ref: '#/components/schemas/WaId'
+        task:
+          $ref: '#/components/schemas/Task'
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        finish_ts:
+          description: Когда за запущенную на выполнение задачу можно будет забрать YEP в формате timestamp
+          type: integer
+          format: int64
+          example: 1719483620
+    Report:
+      type: object
+      description: Отчёт
+      required:
+        - report
+        - report_type
+      properties:
+        id:
+          description: Id отчёта
+          type: string
+          example: 668cfb469b26e9cd77be814a
+        user_id:
+          $ref: '#/components/schemas/WaId'
+        report:
+          description: Тело отчёта
+          type: string
+          example: Такой-то сервис вызывает у меня подозрения
+        report_type:
+          $ref: '#/components/schemas/ReportType'
+        report_status:
+          $ref: '#/components/schemas/ReportStatus'
+    Task:
+      type: object
+      description: Задача
+      required:
+        - name
+        - icon_url
+        - task_type
+        - bonus
+      properties:
+        id:
+          $ref: '#/components/schemas/TaskId'
+        name:
+          description: Наименование задачи
+          type: string
+          example: Some task name
+        code:
+          description: Кодовое наименование задачи. Для TaskType.Instant по нему определяется логика выполнения задачи
+          format: string
+          example: Friend
+        icon_type:
+          description: Тип иконки отображаемой для задачи
+          type: string
+          example: Telegram
+        icon_url:
+          description: ссылка на иконку задачи
+          type: string
+        task_type:
+          $ref: '#/components/schemas/TaskType'
+        bonus:
+          description: Количество YEP которые будут получены за выполнение задачи
+          type: integer
+          format: int32
+          example: 250
+        target_link:
+          description: Ссылка по которой нужно перейти для выполнения
+          type: string
+    TaskId:
+      description: Id задачи
+      type: string
+      example: 668121b3d5c01a6d7a85cb7c
+    User:
+      type: object
+      description: Модель пользователя
+      properties:
+        wa_id:
+          $ref: '#/components/schemas/WaId'
+        referrer_id:
+          allOf:
+            - $ref: '#/components/schemas/WaId'
+          description: id (wa_id) пользователя по чьей реферальной ссылке был зарегистрирован данный пользователь
+        firstName:
+          description: >-
+            Имя пользователя, соответствует telegram [WebAppUser.firstName](https://core.telegram.org/bots/webapps#webappuser)
+          type: string
+          example: Роланд
+        username:
+          description: >-
+            Login пользователя, соответствует telegram [WebAppUser.username](https://core.telegram.org/bots/webapps#webappuser)
+          type: string
+          example: gheralt92
+        photo_url:
+          description: >-
+            Ссылка на фото, соответствует telegram [WebAppUser.photo_url](https://core.telegram.org/bots/webapps#webappuser)
+          type: string
+        balance:
+          description: Количество YEP накопленных пользователем
+          type: integer
+          format: int64
+          example: 1100
+        next_claim_ts:
+          description: Время следующего получения нафармленного YEP в формате timestamp
+          type: integer
+          format: int64
+          example: 1719483620
+        next_friend_claim_ts:
+          description: Время следующего получения YEP с рефералов в формате timestamp
+          type: integer
+          format: int64
+          example: 1719483621
+    WebAppInitData:
+      type: object
+      description: >-
+        [Data](https://core.telegram.org/bots/webapps#webappinitdata) that is transferred to the Mini App when it is opened
+      properties:
+        user:
+          $ref: '#/components/schemas/WebAppUser'
+        start_param:
+          description: The value of the startattach parameter, passed [via link](https://core.telegram.org/bots/webapps#adding-bots-to-the-attachment-menu)
+          type: string
+          example: 2i1
+    WebAppUser:
+      type: object
+      description: Модель из [webappuser](https://core.telegram.org/bots/webapps#webappuser)
+      required:
+        - id
+        - first_name
+      properties:
+        id:
+          description: A unique identifier for the user or bot
+          type: integer
+          format: int64
+          example: 123456
+        first_name:
+          description: First name of the user or bot
+          type: string
+          example: Horhe
+        is_bot:
+          description: True, if this user is a bot
+          type: boolean
+          example: true
+        last_name:
+          description: Last name of the user or bot
+          type: string
+          example: Dra
+        username:
+          description: Username of the user or bot
+          type: string
+          example: gheralt92
+        language_code:
+          description: >-
+            [IETF](https://en.wikipedia.org/wiki/IETF_language_tag) language tag of the user's language
+          type: string
+          example: ro
+        is_premium:
+          description: True, if this user is a Telegram Premium user
+          type: boolean
+          example: True
+        added_to_attachment_menu:
+          description: True, if this user added the bot to the attachment menu
+          type: boolean
+          example: True
+        allows_write_to_pm:
+          description: True, if this user allowed the bot to message them
+          type: boolean
+          example: True
+        photo_url:
+          description: URL of the user’s profile photo. The photo can be in .jpeg or .svg formats
+          type: string
+    ClaimRecord:
+      type: object
+      description: Информация о разовом получении YEP
+      properties:
+        claim_ts:
+          description: Время получения YEP в формате timestamp
+          type: integer
+          format: int64
+          example: 1719483619
+        claim_value:
+          description: количество полученных YEP
+          type: integer
+          format: int32
+          example: 1000
+        claim_type:
+          $ref: '#/components/schemas/ClaimType'
+    ClaimType:
+      type: string
+      description: >-
+        Вид операции при которой забраны YEP:
+          - Initial - при регистрации
+          - Claim - забраны после фарминга
+          - Tax - за пользователей пришедших по реферальной ссылке
+          - Task - в результате выполнения задания
+          - Report
+          - Rate
+          - Subscription
+      enum:
+        - Initial
+        - Claim
+        - Tax
+        - Task
+        - Report
+        - Rate
+        - Subscription
+      example: Claim
+    ReportType:
+      type: string
+      description: >-
+        Вид отчёта. Берётся из модели BotState.
+        Возможные значения:
+         - MINI_APP - Отчёт по Telegram Mini App
+         - WEB_SITE - Отчёт по адресу сайта
+         - JETTON - Отчёт по жетону TON
+         - ACCOUNT - Отчёт по Telegram аккаунту
+         - OTHER - Другое
+      enum:
+        - MINI_APP
+        - WEB_SITE
+        - JETTON
+        - ACCOUNT
+        - OTHER
+    ReportStatus:
+      type: string
+      description: >-
+        Статус отчёта:
+          - Created - Необходима проверка
+          - Approved - Подтверждено, YEP начислены
+          - Rejected - Не подтверждено
+      enum:
+        - Created
+        - Approved
+        - Rejected
+      default: Created
+    TaskType:
+      type: string
+      description: >-
+        Вид задачи:
+          - Instant - Забрать сразу
+          - Delayed - Запустить на выполнение, по прошествии времени забрать
+      enum:
+        - Instant
+        - Delayed
+      example: Instant
+    TaskStatus:
+      type: string
+      description: >-
+        Статус задачи:
+          - Open - Доступна для выполнения
+          - Inprogress - В процессе выполнения (Имеет смысл для TaskType.Delayed)
+          - Done - Выполнена (Нигде не используется, возможно лишний)
+          - Claimed - YEP за задачу получены
+      enum:
+        - Open
+        - Inprogress
+        - Done
+        - Claimed
+      default: Open
